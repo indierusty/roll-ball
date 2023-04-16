@@ -4,6 +4,8 @@ use rand::prelude::*;
 pub const PLAYER_SPEED: f32 = 500.0;
 pub const PLAYER_SIZE: f32 = 64.0; // player sprite size
 pub const ENEMY_COUNT: usize = 5;
+pub const ENEMY_SPEED: f32 = 250.0;
+pub const ENEMY_SIZE: f32 = 64.0; // enemy sprite size
 
 fn main() {
     App::new()
@@ -13,6 +15,9 @@ fn main() {
         .add_startup_system(spawn_camera)
         .add_system(player_movement)
         .add_system(confine_player_movement)
+        .add_system(enemies_movement)
+        .add_system(update_enemies_direction)
+        .add_system(enemy_vs_player)
         .run()
 }
 
@@ -20,7 +25,9 @@ fn main() {
 pub struct Player;
 
 #[derive(Component)]
-pub struct Enemy;
+pub struct Enemy {
+    direction: Vec3,
+}
 
 pub fn spawn_player(
     mut commands: Commands,
@@ -60,7 +67,9 @@ pub fn spawn_enemies(
                 texture: asset_server.load("sprite/ball_red_large.png"),
                 ..default()
             },
-            Enemy,
+            Enemy {
+                direction: vec3(random(), random(), 0.0).normalize(),
+            },
         ));
     }
 }
@@ -118,5 +127,81 @@ pub fn confine_player_movement(
         );
 
         transform.translation = transform.translation.clamp(min, max);
+    }
+}
+
+pub fn enemies_movement(mut enemies_query: Query<(&mut Transform, &Enemy)>, time: Res<Time>) {
+    for (mut transform, enemy) in enemies_query.iter_mut() {
+        transform.translation += enemy.direction * ENEMY_SPEED * time.delta_seconds();
+    }
+}
+
+pub fn update_enemies_direction(
+    mut enemies_query: Query<(&mut Transform, &mut Enemy)>,
+    window_query: Query<&Window, With<PrimaryWindow>>,
+    audio: Res<Audio>,
+    asset_server: Res<AssetServer>,
+) {
+    let window = window_query.get_single().unwrap();
+    let enemy_radius = ENEMY_SIZE / 2.0;
+
+    for (mut transform, mut enemy) in enemies_query.iter_mut() {
+        let mut direction_changed = false;
+
+        if transform.translation.x < enemy_radius
+            || transform.translation.x > window.width() - enemy_radius
+        {
+            enemy.direction.x *= -1.;
+            direction_changed = true;
+        }
+
+        if transform.translation.y < enemy_radius
+            || transform.translation.y > window.height() - enemy_radius
+        {
+            enemy.direction.y *= -1.;
+            direction_changed = true;
+        }
+
+        // playe sound and clamp position
+        if direction_changed {
+            // if enemy is far from window wall then enemy get stuck to wall, hence pull it inside window
+            transform.translation = clamp_pos(transform.translation, enemy_radius + 1.0, window);
+
+            // playe radius
+            let sound_effect: Handle<AudioSource> = asset_server.load("audio/pluck_001.ogg");
+            audio.play(sound_effect);
+        }
+    }
+}
+
+pub fn clamp_pos(pos: Vec3, radius: f32, window: &Window) -> Vec3 {
+    let min = vec3(radius, radius, 0.);
+    let max = vec3(window.width() - radius, window.height() - radius, 0.);
+    pos.clamp(min, max)
+}
+
+pub fn enemy_vs_player(
+    mut commands: Commands,
+    player_query: Query<(Entity, &Transform), With<Player>>,
+    enemies_query: Query<&Transform, With<Enemy>>,
+    asset_server: Res<AssetServer>,
+    audio: Res<Audio>,
+) {
+    if let Ok((player_entity, player_transform)) = player_query.get_single() {
+        for enemy_transform in enemies_query.iter() {
+            let distance = ENEMY_SIZE / 2. + PLAYER_SIZE / 2.;
+            let is_collided = enemy_transform
+                .translation
+                .distance_squared(player_transform.translation)
+                <= distance * distance;
+
+            if is_collided {
+                println!("Game Over!");
+                let sound_effect: Handle<AudioSource> =
+                    asset_server.load("audio/explosionCrunch_000.ogg");
+                audio.play(sound_effect);
+                commands.entity(player_entity).despawn();
+            }
+        }
     }
 }
