@@ -6,18 +6,28 @@ pub const PLAYER_SIZE: f32 = 64.0; // player sprite size
 pub const ENEMY_COUNT: usize = 5;
 pub const ENEMY_SPEED: f32 = 250.0;
 pub const ENEMY_SIZE: f32 = 64.0; // enemy sprite size
+pub const STAR_COUNT: usize = 10;
+pub const STAR_SIZE: f32 = 30.0; // star.png is 30x30 px
+pub const STAR_SPAWN_TIME: f32 = 1.0; // sec
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .init_resource::<Score>() // ::<> is called "Turbo-Fish Syntax"
+        .init_resource::<StarSpawnTimer>()
         .add_startup_system(spawn_player)
         .add_startup_system(spawn_enemies)
+        .add_startup_system(spawn_stars)
         .add_startup_system(spawn_camera)
         .add_system(player_movement)
         .add_system(confine_player_movement)
         .add_system(enemies_movement)
         .add_system(update_enemies_direction)
         .add_system(enemy_vs_player)
+        .add_system(player_vs_stars)
+        .add_system(on_update_score)
+        .add_system(tick_spawn_star_timer)
+        .add_system(spawn_star_over_time)
         .run()
 }
 
@@ -26,7 +36,34 @@ pub struct Player;
 
 #[derive(Component)]
 pub struct Enemy {
-    direction: Vec3,
+    pub direction: Vec3,
+}
+
+#[derive(Component)]
+pub struct Star {}
+
+#[derive(Resource)]
+pub struct Score {
+    pub value: u32,
+}
+
+impl Default for Score {
+    fn default() -> Self {
+        Self { value: 0 }
+    }
+}
+
+#[derive(Resource)]
+pub struct StarSpawnTimer {
+    pub timer: Timer,
+}
+
+impl Default for StarSpawnTimer {
+    fn default() -> Self {
+        Self {
+            timer: Timer::from_seconds(STAR_SPAWN_TIME, TimerMode::Repeating),
+        }
+    }
 }
 
 pub fn spawn_player(
@@ -70,6 +107,29 @@ pub fn spawn_enemies(
             Enemy {
                 direction: vec3(random(), random(), 0.0).normalize(),
             },
+        ));
+    }
+}
+
+pub fn spawn_stars(
+    mut commands: Commands,
+    window_query: Query<&Window, With<PrimaryWindow>>,
+    asset_server: Res<AssetServer>,
+) {
+    // we know that there is only one primary window hence get_single()
+    let window = window_query.get_single().unwrap();
+
+    for _ in 0..STAR_COUNT {
+        let random_x = random::<f32>() * window.width();
+        let random_y = random::<f32>() * window.height();
+
+        commands.spawn((
+            SpriteBundle {
+                transform: Transform::from_xyz(random_x, random_y, 0.0),
+                texture: asset_server.load("sprite/star.png"),
+                ..default()
+            },
+            Star {},
         ));
     }
 }
@@ -203,5 +263,66 @@ pub fn enemy_vs_player(
                 commands.entity(player_entity).despawn();
             }
         }
+    }
+}
+
+pub fn player_vs_stars(
+    mut commands: Commands,
+    player_query: Query<&Transform, With<Player>>,
+    stars_query: Query<(Entity, &Transform), With<Star>>,
+    asset_server: Res<AssetServer>,
+    audio: Res<Audio>,
+    mut score: ResMut<Score>,
+) {
+    if let Ok(player_transform) = player_query.get_single() {
+        for (star_entity, star_transform) in stars_query.iter() {
+            let distance = STAR_SIZE / 2. + PLAYER_SIZE / 2.;
+
+            let is_collided = star_transform
+                .translation
+                .distance_squared(player_transform.translation)
+                <= distance * distance;
+
+            if is_collided {
+                let sound_effect: Handle<AudioSource> =
+                    asset_server.load("audio/laserLarge_000.ogg");
+                audio.play(sound_effect);
+                commands.entity(star_entity).despawn();
+
+                score.value += 1;
+            }
+        }
+    }
+}
+
+pub fn on_update_score(score: Res<Score>) {
+    if score.is_changed() {
+        println!("You got star, score is {}", score.value)
+    }
+}
+
+pub fn tick_spawn_star_timer(mut star_spawn_timer: ResMut<StarSpawnTimer>, time: Res<Time>) {
+    star_spawn_timer.timer.tick(time.delta());
+}
+
+pub fn spawn_star_over_time(
+    mut commands: Commands,
+    window_query: Query<&Window, With<PrimaryWindow>>,
+    asset_server: Res<AssetServer>,
+    star_spawn_timer: Res<StarSpawnTimer>,
+) {
+    if star_spawn_timer.timer.finished() {
+        let window = window_query.get_single().unwrap();
+        let random_x = random::<f32>() * window.width();
+        let random_y = random::<f32>() * window.height();
+
+        commands.spawn((
+            SpriteBundle {
+                transform: Transform::from_xyz(random_x, random_y, 0.0),
+                texture: asset_server.load("sprite/star.png"),
+                ..default()
+            },
+            Star {},
+        ));
     }
 }
