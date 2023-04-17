@@ -1,4 +1,7 @@
-use bevy::{math::vec3, prelude::*, window::PrimaryWindow};
+use bevy::app::AppExit;
+use bevy::math::vec3;
+use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 use rand::prelude::*;
 
 pub const PLAYER_SPEED: f32 = 500.0;
@@ -28,6 +31,7 @@ fn main() {
         .add_system(on_update_score)
         .add_system(tick_spawn_star_timer)
         .add_system(spawn_star_over_time)
+        .add_system(exit_game)
         .run()
 }
 
@@ -324,5 +328,12 @@ pub fn spawn_star_over_time(
             },
             Star {},
         ));
+    }
+}
+
+// bevy has event system which we can send event to.
+pub fn exit_game(keyboard_input: Res<Input<KeyCode>>, mut exit_event_writer: EventWriter<AppExit>) {
+    if keyboard_input.just_pressed(KeyCode::Escape) {
+        exit_event_writer.send(AppExit);
     }
 }
